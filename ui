@@ -1,0 +1,82 @@
+import React, { useState, useEffect } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Table } from "@/components/ui/table";
+import { PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
+
+const ScanDashboard = () => {
+  const [darkMode, setDarkMode] = useState(true);
+  const [scanHistory, setScanHistory] = useState([]);
+  const [scanSummary, setScanSummary] = useState({ high: 0, medium: 0, low: 0 });
+
+  useEffect(() => {
+    fetch("/api/scans")
+      .then((res) => res.json())
+      .then((data) => {
+        setScanHistory(data.history);
+        setScanSummary(data.summary);
+      });
+  }, []);
+
+  const COLORS = ["#ff4d4d", "#ffcc00", "#66ff66"];
+
+  return (
+    <div className={darkMode ? "bg-gray-900 text-white p-6" : "bg-gray-100 text-black p-6"}>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Threat Hunting Dashboard</h1>
+        <Switch checked={darkMode} onCheckedChange={setDarkMode} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardContent>
+            <h2 className="text-xl font-semibold mb-2">Scan Summary</h2>
+            <PieChart width={300} height={300}>
+              <Pie dataKey="value" data={Object.entries(scanSummary).map(([key, value]) => ({ name: key, value }))} cx={150} cy={150} outerRadius={80} fill="#8884d8" label>
+                {Object.entries(scanSummary).map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <h2 className="text-xl font-semibold mb-2">Scan History</h2>
+            <Table>
+              <thead>
+                <tr>
+                  <th>Target</th>
+                  <th>Type</th>
+                  <th>Timestamp</th>
+                  <th>Vulnerabilities</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scanHistory.map((scan, index) => (
+                  <tr key={index}>
+                    <td>{scan.target}</td>
+                    <td>{scan.type}</td>
+                    <td>{scan.timestamp}</td>
+                    <td>{scan.vulnerabilities.length}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-6 flex justify-between">
+        <Button onClick={() => alert("Starting new scan...")}>New Scan</Button>
+        <Button onClick={() => alert("Exporting report...")}>Export Report</Button>
+      </div>
+    </div>
+  );
+};
+
+export default ScanDashboard;
