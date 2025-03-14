@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threat Hunting Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.5"></script>
+</head>
+<body class="bg-gray-900 text-white p-6">
+    <div class="flex justify-between items-center mb-4">
+        <h1 class="text-2xl font-bold">Threat Hunting Dashboard</h1>
+        <button id="toggle-dark" class="bg-gray-700 px-4 py-2 rounded">Toggle Dark Mode</button>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-gray-800 p-4 rounded-lg">
+            <h2 class="text-xl font-semibold mb-2">Scan Summary</h2>
+            <canvas id="summaryChart"></canvas>
+        </div>
+
+        <div class="bg-gray-800 p-4 rounded-lg">
+            <h2 class="text-xl font-semibold mb-2">Scan History</h2>
+            <table class="w-full border border-gray-600">
+                <thead>
+                    <tr>
+                        <th class="border p-2">Target</th>
+                        <th class="border p-2">Type</th>
+                        <th class="border p-2">Timestamp</th>
+                        <th class="border p-2">Vulnerabilities</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for scan in scan_history %}
+                    <tr>
+                        <td class="border p-2">{{ scan.target }}</td>
+                        <td class="border p-2">{{ scan.type }}</td>
+                        <td class="border p-2">{{ scan.timestamp }}</td>
+                        <td class="border p-2">{{ scan.vulnerabilities | length }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="mt-6 flex justify-between">
+        <button class="bg-blue-600 px-4 py-2 rounded" hx-post="/api/scan?target=example.com&scan_type=API" hx-swap="outerHTML">New Scan</button>
+        <button class="bg-green-600 px-4 py-2 rounded">Export Report</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const ctx = document.getElementById('summaryChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: ["High", "Medium", "Low"],
+                datasets: [{
+                    data: [{{ summary.high }}, {{ summary.medium }}, {{ summary.low }}],
+                    backgroundColor: ["#ff4d4d", "#ffcc00", "#66ff66"]
+                }]
+            }
+        });
+
+        document.getElementById("toggle-dark").addEventListener("click", () => {
+            document.body.classList.toggle("bg-gray-900");
+            document.body.classList.toggle("bg-gray-100");
+            document.body.classList.toggle("text-white");
+            document.body.classList.toggle("text-black");
+        });
+    </script>
+</body>
+</html>
