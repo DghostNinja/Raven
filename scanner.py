@@ -2,8 +2,12 @@ import sqlite3
 import requests
 from bs4 import BeautifulSoup
 import argparse
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress
 
 DB_FILE = "threat_hunter.db"
+console = Console()
 
 def save_scan(target, scan_type):
     """Save scan metadata to the database and return scan_id."""
@@ -15,12 +19,8 @@ def save_scan(target, scan_type):
     conn.close()
     return scan_id
 
-def save_finding(scan_id, vulnerability, severity, recommendation, verbose):
-    """Save scan findings to the database."""
-    if verbose:
-        print(f"⚠️  Found: {vulnerability} (Severity: {severity})")
-        print(f"   ➜ Recommendation: {recommendation}\n")
-
+def save_finding(scan_id, vulnerability, severity, recommendation):
+    """Save scan findings and print them immediately."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("""
@@ -30,88 +30,155 @@ def save_finding(scan_id, vulnerability, severity, recommendation, verbose):
     conn.commit()
     conn.close()
 
-def scan_api(url, verbose=False):
+    # Print the finding immediately
+    console.print(f"[bold red]⚠ Found: {vulnerability}[/bold red] (Severity: {severity})")
+    console.print(f"   ➜ Recommendation: {recommendation}\n", style="bold green")
+
+def scan_api(url):
     """Scan an API for security issues (OWASP API Top 10)."""
     scan_id = save_scan(url, "API")
 
-    try:
-        response = requests.get(url, timeout=10)  # Enforcing SSL verification
-        if response.status_code == 200:
-            save_finding(scan_id, "API1:2019 - Broken Object Level Authorization", "High",
-                         "Ensure proper access controls are implemented.", verbose)
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Scanning API...", total=3)
 
-        # Check CORS misconfiguration (OWASP API4:2019)
-        if "Access-Control-Allow-Origin" in response.headers and response.headers["Access-Control-Allow-Origin"] == "*":
-            save_finding(scan_id, "API4:2019 - Lack of Resources & Rate Limiting", "Medium",
-                         "Restrict CORS to trusted domains.", verbose)
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                save_finding(scan_id, "API1:2019 - Broken Object Level Authorization", "High",
+                             "Ensure proper access controls are implemented.")
+                progress.update(task, advance=1)
 
-        # Check HTTP methods (OWASP API6:2019)
-        for method in ["PUT", "DELETE", "OPTIONS"]:
-            method_response = requests.request(method, url, timeout=10)
-            if method_response.status_code in [200, 201, 202]:
-                save_finding(scan_id, f"API6:2019 - Mass Assignment (Unrestricted {method})", "High",
-                             f"Restrict {method} to authorized users.", verbose)
+            if "Access-Control-Allow-Origin" in response.headers and response.headers["Access-Control-Allow-Origin"] == "*":
+                save_finding(scan_id, "API4:2019 - Lack of Resources & Rate Limiting", "Medium",
+                             "Restrict CORS to trusted domains.")
+                progress.update(task, advance=1)
 
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error scanning API: {url} - {e}")
+            for method in ["PUT", "DELETE", "OPTIONS"]:
+                method_response = requests.request(method, url, timeout=10)
+                if method_response.status_code in [200, 201, 202]:
+                    save_finding(scan_id, f"API6:2019 - Mass Assignment ({method})", "High",
+                                 f"Restrict {method} to authorized users.")
+                    progress.update(task, advance=1)
 
-def scan_web(url, verbose=False):
+        except requests.exceptions.RequestException as e:
+            console.print(f"[red]❌ Error scanning API: {url} - {e}[/red]")
+
+def scan_web(url):
     """Scan a web app for security issues (OWASP Web Top 10)."""
     scan_id = save_scan(url, "Web")
 
-    try:
-        response = requests.get(url, timeout=10)  # Enforcing SSL verification
-        soup = BeautifulSoup(response.text, "html.parser")
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Scanning Web Application...", total=3)
 
-        # Check for missing security headers (OWASP A06:2021)
-        headers = response.headers
-        missing_headers = [h for h in ["Content-Security-Policy", "X-Frame-Options", "Strict-Transport-Security"] if h not in headers]
-        if missing_headers:
-            save_finding(scan_id, "A06:2021 - Security Misconfiguration", "Medium",
-                         f"Add {', '.join(missing_headers)}.", verbose)
+        try:
+            response = requests.get(url, timeout=10)
+            soup = BeautifulSoup(response.text, "html.parser")
 
-        # Check for directory listing (OWASP A05:2021)
-        if "Index of" in soup.text:
-            save_finding(scan_id, "A05:2021 - Security Misconfiguration (Directory Listing)", "High",
-                         "Disable directory listing on the web server.", verbose)
+            headers = response.headers
+            missing_headers = [h for h in ["Content-Security-Policy", "X-Frame-Options", "Strict-Transport-Security"] if h not in headers]
+            if missing_headers:
+                save_finding(scan_id, "A06:2021 - Security Misconfiguration", "Medium",
+                             f"Add {', '.join(missing_headers)}.")
+                progress.update(task, advance=1)
 
-        # Check for default login pages (OWASP A07:2021)
-        common_admin_pages = ["/admin", "/login", "/wp-admin", "/phpmyadmin"]
-        for page in common_admin_pages:
-            admin_response = requests.get(url + page, timeout=10)
-            if admin_response.status_code == 200:
-                save_finding(scan_id, f"A07:2021 - Identification & Authentication Failures (Default Login: {page})",
-                             "Medium", "Restrict admin page access.", verbose)
+            if "Index of" in soup.text:
+                save_finding(scan_id, "A05:2021 - Security Misconfiguration (Directory Listing)", "High",
+                             "Disable directory listing on the web server.")
+                progress.update(task, advance=1)
 
-        # Check for weak SSL/TLS configuration (OWASP A02:2021)
-        if url.startswith("https://"):
-            tls_response = requests.get(url, timeout=10)
-            if tls_response.status_code == 200:
-                save_finding(scan_id, "A02:2021 - Cryptographic Failures (Weak SSL/TLS)", "High",
-                             "Upgrade to modern TLS standards.", verbose)
+            common_admin_pages = ["/admin", "/login", "/wp-admin", "/phpmyadmin"]
+            for page in common_admin_pages:
+                admin_response = requests.get(url + page, timeout=10)
+                if admin_response.status_code == 200:
+                    save_finding(scan_id, f"A07:2021 - Default Login Page Found: {page}", "Medium",
+                                 "Restrict admin page access.")
+                    progress.update(task, advance=1)
 
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error scanning web app: {url} - {e}")
+            # Force a test vulnerability to verify output
+            save_finding(scan_id, "Test Vulnerability", "High", "Fix this immediately.")
+            progress.update(task, advance=1)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Threat Hunting Scanner")
-    parser.add_argument("--verbose", action="store_true", help="Show scan results before saving")
+        except requests.exceptions.RequestException as e:
+            console.print(f"[red]❌ Error scanning web app: {url} - {e}[/red]")
+
+def list_results():
+    """Display past scan results in a table."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, target, scan_type, timestamp FROM scans")
+    results = cursor.fetchall()
+    conn.close()
+
+    if not results:
+        console.print("[yellow]⚠ No scans found.[/yellow]")
+        return
+
+    table = Table(title="Scan Results")
+    table.add_column("ID", style="bold cyan")
+    table.add_column("Target", style="magenta")
+    table.add_column("Type", style="green")
+    table.add_column("Timestamp", style="blue")
+
+    for row in results:
+        table.add_row(str(row[0]), row[1], row[2], row[3])
+
+    console.print(table)
+
+def view_scan(scan_id):
+    """View details of a specific scan."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT vulnerability, severity, recommendation FROM findings WHERE scan_id = ?", (scan_id,))
+    findings = cursor.fetchall()
+    conn.close()
+
+    if not findings:
+        console.print(f"[yellow]⚠ No findings found for Scan ID {scan_id}.[/yellow]")
+        return
+
+    table = Table(title=f"Scan ID: {scan_id} Findings")
+    table.add_column("Vulnerability", style="bold red")
+    table.add_column("Severity", style="yellow")
+    table.add_column("Recommendation", style="green")
+
+    for row in findings:
+        table.add_row(row[0], row[1], row[2])
+
+    console.print(table)
+
+def main():
+    parser = argparse.ArgumentParser(description="Threat Hunting Scanner CLI")
+    subparsers = parser.add_subparsers(dest="command")
+
+    scan_api_parser = subparsers.add_parser("scan-api", help="Scan an API for security issues")
+    scan_api_parser.add_argument("url", help="API URL to scan")
+
+    scan_web_parser = subparsers.add_parser("scan-web", help="Scan a web application")
+    scan_web_parser.add_argument("url", help="Web application URL to scan")
+
+    scan_both_parser = subparsers.add_parser("scan-both", help="Scan both API and Web Application")
+    scan_both_parser.add_argument("url", help="Target URL")
+
+    subparsers.add_parser("results-list", help="List all past scan results")
+
+    view_scan_parser = subparsers.add_parser("results-view", help="View findings from a specific scan")
+    view_scan_parser.add_argument("scan_id", help="Scan ID to view findings")
+
     args = parser.parse_args()
 
-    print("\n[ 🔍 Threat Hunting Scanner ]")
-    print("1. Scan API")
-    print("2. Scan Web Application")
-    print("3. Scan Both API & Web")
-    choice = input("Select an option (1/2/3): ").strip()
-
-    target = input("Enter target URL: ").strip()
-
-    if choice == "1":
-        scan_api(target, verbose=args.verbose)
-    elif choice == "2":
-        scan_web(target, verbose=args.verbose)
-    elif choice == "3":
-        scan_api(target, verbose=args.verbose)
-        scan_web(target, verbose=args.verbose)
+    if args.command == "scan-api":
+        scan_api(args.url)
+    elif args.command == "scan-web":
+        scan_web(args.url)
+    elif args.command == "scan-both":
+        scan_api(args.url)
+        scan_web(args.url)
+    elif args.command == "results-list":
+        list_results()
+    elif args.command == "results-view":
+        view_scan(args.scan_id)
     else:
-        print("❌ Invalid choice. Please select 1, 2, or 3.")
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
